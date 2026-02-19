@@ -1,6 +1,3 @@
-// Phase 3 placeholder — Order management
-// Will handle order placement, modification, and cancellation
-
-export class OrderManager {
-  // TODO: Implement in Phase 3
-}
+// Placeholder for potential unified order interface in future iterations.
+// Actual mode switching is handled by PositionManager.
+export class OrderManager {}

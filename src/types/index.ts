@@ -67,6 +67,18 @@ export interface AssetConfig {
   stopLossPct: number;
   defaultLeverage: number;
   strongLeverage: number;
+  qtyPrecision: number;
+}
+
+export interface PositionSizeResult {
+  notionalSize: number;
+  quantity: string;
+  marginRequired: number;
+  riskAmount: number;
+  stopLossPrice: number;
+  takeProfitPrice: number;
+  entryPrice: number;
+  leverage: number;
 }
 
 export interface SignalWeight {

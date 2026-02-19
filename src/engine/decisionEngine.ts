@@ -1,13 +1,64 @@
 import { createModuleLogger } from '../monitoring/logger';
 import { ASSET_CONFIGS, SUPPORTED_ASSETS } from '../config/assets';
 import { RISK_CONFIG } from '../config/risk';
-import { Asset, TradeDecision } from '../types';
+import { Asset, TradeDecision, CompositeScoreResult } from '../types';
 import { CompositeScoreEngine } from './compositeScore';
 
 const log = createModuleLogger('decision-engine');
 
 export class DecisionEngine {
   constructor(private readonly scoreEngine: CompositeScoreEngine) {}
+
+  /**
+   * Evaluates a pre-calculated score result without re-querying Supabase.
+   * Use this inside the scoring cycle to avoid double computation.
+   */
+  evaluateFromScore(scoreResult: CompositeScoreResult): TradeDecision {
+    const { asset, score, signal, isReliable, freshSignalCount } = scoreResult;
+    const assetCfg = ASSET_CONFIGS[asset];
+    const stopLossPct = assetCfg.stopLossPct;
+    const takeProfitPct = stopLossPct * RISK_CONFIG.takeProfitRatio;
+
+    if (!isReliable) {
+      const reason = `Insufficient fresh signals: ${freshSignalCount}/5 available (minimum 3 required)`;
+      log.warn(`${asset}: ${reason}`);
+      return { asset, action: 'NO_ACTION', signal, score, positionSizePercent: 0, leverage: 0, stopLossPct, takeProfitPct, reason, isReliable: false };
+    }
+
+    let action: TradeDecision['action'];
+    let positionSizePercent: number;
+    let leverage: number;
+    let reason: string;
+
+    switch (signal) {
+      case 'STRONG_LONG':
+        action = 'OPEN_LONG'; positionSizePercent = RISK_CONFIG.maxRiskPerTrade; leverage = assetCfg.strongLeverage;
+        reason = `Strong bullish consensus: ${freshSignalCount}/5 signals fresh, score ${score > 0 ? '+' : ''}${score}`; break;
+      case 'LONG':
+        action = 'OPEN_LONG'; positionSizePercent = RISK_CONFIG.normalRisk; leverage = assetCfg.defaultLeverage;
+        reason = `Bullish signal: ${freshSignalCount}/5 signals fresh, score ${score > 0 ? '+' : ''}${score}`; break;
+      case 'MILD_BULLISH':
+        action = 'NO_ACTION'; positionSizePercent = 0; leverage = 0;
+        reason = `Mild bullish — alert only (score ${score > 0 ? '+' : ''}${score})`; break;
+      case 'NEUTRAL':
+        action = 'CLOSE'; positionSizePercent = 0; leverage = 0;
+        reason = `Neutral signal — close any open position (score ${score})`; break;
+      case 'MILD_BEARISH':
+        action = 'NO_ACTION'; positionSizePercent = 0; leverage = 0;
+        reason = `Mild bearish — alert only (score ${score})`; break;
+      case 'SHORT':
+        action = 'OPEN_SHORT'; positionSizePercent = RISK_CONFIG.normalRisk; leverage = assetCfg.defaultLeverage;
+        reason = `Bearish signal: ${freshSignalCount}/5 signals fresh, score ${score}`; break;
+      case 'STRONG_SHORT':
+        action = 'OPEN_SHORT'; positionSizePercent = RISK_CONFIG.maxRiskPerTrade; leverage = assetCfg.strongLeverage;
+        reason = `Strong bearish consensus: ${freshSignalCount}/5 signals fresh, score ${score}`; break;
+      default:
+        action = 'NO_ACTION'; positionSizePercent = 0; leverage = 0; reason = 'Unknown signal direction';
+    }
+
+    log.info(`${asset}: ${action} | signal=${signal} | score=${score} | leverage=${leverage}x`);
+    return { asset, action, signal, score, positionSizePercent, leverage, stopLossPct, takeProfitPct, reason, isReliable };
+  }
 
   /**
    * Evaluates the composite score for a single asset and produces a trade decision.
