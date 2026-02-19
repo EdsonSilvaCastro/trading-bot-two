@@ -23,11 +23,11 @@ export const SCORE_THRESHOLDS: ScoreThresholds = {
  * Maps a composite score (-17 to +17) to a signal direction
  */
 export function scoreToSignal(score: number): SignalDirection {
-  if (score >= SCORE_THRESHOLDS.STRONG_LONG) return 'STRONG_LONG';
-  if (score >= SCORE_THRESHOLDS.LONG) return 'LONG';
-  if (score >= SCORE_THRESHOLDS.MILD_BULLISH) return 'MILD_BULLISH';
-  if (score >= SCORE_THRESHOLDS.MILD_BEARISH && score <= SCORE_THRESHOLDS.NEUTRAL_UPPER) return 'NEUTRAL';
-  if (score >= SCORE_THRESHOLDS.SHORT) return 'MILD_BEARISH';
-  if (score >= SCORE_THRESHOLDS.STRONG_SHORT) return 'SHORT';
+  if (score >= 10) return 'STRONG_LONG';
+  if (score >= 5) return 'LONG';
+  if (score >= 2) return 'MILD_BULLISH';
+  if (score > -2) return 'NEUTRAL';
+  if (score > -5) return 'MILD_BEARISH';
+  if (score > -10) return 'SHORT';
   return 'STRONG_SHORT';
 }

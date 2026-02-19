@@ -1,11 +1,21 @@
 import TelegramBot from 'node-telegram-bot-api';
 import { createModuleLogger } from './logger';
 import { Asset } from '../types';
+import type { CompositeScoreEngine } from '../engine/compositeScore';
 
 const log = createModuleLogger('telegram');
 
 let bot: TelegramBot | null = null;
 let chatId: string | null = null;
+let scoreEngine: CompositeScoreEngine | null = null;
+
+/**
+ * Registers the CompositeScoreEngine so the /scores command can call it.
+ */
+export function setScoreEngine(engine: CompositeScoreEngine): void {
+  scoreEngine = engine;
+  log.info('Score engine registered with Telegram bot');
+}
 
 /**
  * Initializes the Telegram bot. Gracefully degrades if credentials are missing.
@@ -26,9 +36,29 @@ export function initTelegramBot(): void {
       bot?.sendMessage(msg.chat.id, 'Bot is running. Use /scores to see latest signals.');
     });
 
-    bot.onText(/\/scores/, (msg) => {
-      // Placeholder — will be wired to real scores in Phase 2
-      bot?.sendMessage(msg.chat.id, 'Score engine not yet active (Phase 2).');
+    bot.onText(/\/scores/, async (msg) => {
+      if (!scoreEngine) {
+        bot?.sendMessage(msg.chat.id, 'Score engine not yet active.');
+        return;
+      }
+      try {
+        const results = await scoreEngine.calculateAllScores();
+        for (const r of results) {
+          const componentLines = Object.entries(r.components)
+            .map(([name, val]) => `  ${name}: ${val > 0 ? '+' : ''}${val.toFixed(2)}`)
+            .join('\n');
+          const reliabilityTag = r.isReliable ? '✓ reliable' : '⚠ unreliable';
+          const scoreStr = `${r.score > 0 ? '+' : ''}${r.score.toFixed(2)}`;
+          const emoji = r.score >= 5 ? '🟢' : r.score <= -5 ? '🔴' : '🟡';
+          const message =
+            `${emoji} <b>${r.asset}</b> — ${scoreStr} (${r.signal}) [${reliabilityTag}]\n` +
+            `Fresh signals: ${r.freshSignalCount}/5\n\n` +
+            `<code>${componentLines}</code>`;
+          await bot?.sendMessage(msg.chat.id, message, { parse_mode: 'HTML' });
+        }
+      } catch (err) {
+        bot?.sendMessage(msg.chat.id, `Error calculating scores: ${(err as Error).message}`);
+      }
     });
 
     bot.onText(/\/pause/, (msg) => {

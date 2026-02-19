@@ -105,3 +105,27 @@ export interface ScoreThresholds {
   SHORT: number;
   STRONG_SHORT: number;
 }
+
+export interface CompositeScoreResult {
+  asset: Asset;
+  score: number;
+  signal: SignalDirection;
+  components: Record<string, number>;     // weighted values
+  rawComponents: Record<string, number>;  // pre-weight normalized values
+  freshSignalCount: number;
+  isReliable: boolean;                    // true if freshSignalCount >= 3
+  timestamp: Date;
+}
+
+export interface TradeDecision {
+  asset: Asset;
+  action: 'OPEN_LONG' | 'OPEN_SHORT' | 'CLOSE' | 'NO_ACTION';
+  signal: SignalDirection;
+  score: number;
+  positionSizePercent: number;  // 0, 0.01, or 0.02
+  leverage: number;             // 3 or 5
+  stopLossPct: number;
+  takeProfitPct: number;
+  reason: string;
+  isReliable: boolean;
+}
