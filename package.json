@@ -1,0 +1,31 @@
+{
+  "name": "onchain-futures-bot",
+  "version": "1.0.0",
+  "description": "On-Chain Intelligence Futures Trading Bot for Bybit",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "ts-node src/index.ts",
+    "collect:once": "ts-node -e \"import('./src/collectors').then(m => new m.CollectorOrchestrator().runAll())\""
+  },
+  "keywords": ["trading", "bybit", "on-chain", "futures"],
+  "license": "MIT",
+  "dependencies": {
+    "@supabase/supabase-js": "^2.39.0",
+    "axios": "^1.6.0",
+    "dotenv": "^16.3.0",
+    "node-cron": "^3.0.3",
+    "node-telegram-bot-api": "^0.66.0",
+    "winston": "^3.11.0",
+    "uuid": "^9.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "@types/node-cron": "^3.0.11",
+    "@types/node-telegram-bot-api": "^0.64.1",
+    "@types/uuid": "^9.0.7",
+    "ts-node": "^10.9.0",
+    "typescript": "^5.3.0"
+  }
+}
