@@ -210,9 +210,6 @@ export class PositionManager {
 
     this.openPositions.set(asset, tradeId ?? orderId);
     this.dailyTradeCount++;
-    if (this.dailyTradeCount > (await this.getBalance()) && this.peakBalance === 0) {
-      this.peakBalance = await this.getBalance();
-    }
 
     const mode = this.isPaperMode ? '[PAPER] ' : '';
     const msg =
@@ -259,8 +256,9 @@ export class PositionManager {
       }
     }
 
+    const exitPrice = await this.bybitClient.getCurrentPrice(ASSET_CONFIGS[asset].symbol);
     await updateTrade(tradeId, {
-      exitPrice: undefined,
+      exitPrice,
       pnlUsdt,
       pnlPct,
       status: pnlUsdt >= 0 ? 'CLOSED' : 'STOPPED',

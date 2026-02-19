@@ -98,7 +98,7 @@ export class PaperTrader {
         : pos.entryPrice - exitPrice;
 
       const pnlUsdt = priceDiff * pos.size * pos.leverage;
-      const pnlPct = priceDiff / pos.entryPrice;
+      const pnlPct = (priceDiff / pos.entryPrice) * pos.leverage;
 
       this.balance += pnlUsdt;
       this.positions.delete(positionId);
