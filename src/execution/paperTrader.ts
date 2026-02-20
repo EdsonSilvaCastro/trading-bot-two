@@ -122,28 +122,29 @@ export class PaperTrader {
 
   /**
    * Checks each open position for SL/TP hits. Auto-closes if triggered.
-   * Returns the list of closed position IDs.
+   * Returns the closed positions with their P&L data.
    */
-  async checkStopLossTakeProfit(): Promise<string[]> {
-    const closed: string[] = [];
+  async checkStopLossTakeProfit(): Promise<Array<{ positionId: string; pnlUsdt: number; pnlPct: number; exitPrice: number; reason: string }>> {
+    const closed: Array<{ positionId: string; pnlUsdt: number; pnlPct: number; exitPrice: number; reason: string }> = [];
 
     for (const pos of this.positions.values()) {
       const currentPrice = await this.bybitClient.getCurrentPrice(pos.symbol);
       if (!currentPrice) continue;
 
-      let reason: string | null = null;
+      let triggerReason: string | null = null;
+      let closeReason: string | null = null;
 
       if (pos.side === 'Buy') {
-        if (currentPrice <= pos.stopLoss) reason = `Stop loss hit @ ${currentPrice}`;
-        else if (currentPrice >= pos.takeProfit) reason = `Take profit hit @ ${currentPrice}`;
+        if (currentPrice <= pos.stopLoss) { triggerReason = 'SL_HIT'; closeReason = `Stop loss hit @ ${currentPrice}`; }
+        else if (currentPrice >= pos.takeProfit) { triggerReason = 'TP_HIT'; closeReason = `Take profit hit @ ${currentPrice}`; }
       } else {
-        if (currentPrice >= pos.stopLoss) reason = `Stop loss hit @ ${currentPrice}`;
-        else if (currentPrice <= pos.takeProfit) reason = `Take profit hit @ ${currentPrice}`;
+        if (currentPrice >= pos.stopLoss) { triggerReason = 'SL_HIT'; closeReason = `Stop loss hit @ ${currentPrice}`; }
+        else if (currentPrice <= pos.takeProfit) { triggerReason = 'TP_HIT'; closeReason = `Take profit hit @ ${currentPrice}`; }
       }
 
-      if (reason) {
-        await this.closePosition(pos.id, reason);
-        closed.push(pos.id);
+      if (triggerReason && closeReason) {
+        const { pnlUsdt, pnlPct } = await this.closePosition(pos.id, closeReason);
+        closed.push({ positionId: pos.id, pnlUsdt, pnlPct, exitPrice: currentPrice, reason: triggerReason });
       }
     }
 

@@ -12,8 +12,8 @@ const log = createModuleLogger('position-manager');
 const MIDNIGHT_RESET_MS = 24 * 60 * 60 * 1000;
 
 export class PositionManager {
-  // asset → trade ID stored in DB
-  private openPositions: Map<Asset, string> = new Map();
+  // asset → both the DB trade ID and paper trader's internal order ID
+  private openPositions: Map<Asset, { tradeId: string; orderId: string }> = new Map();
   // asset → timestamp of last loss
   private lastLossTimestamp: Map<Asset, number> = new Map();
   private dailyTradeCount = 0;
@@ -208,7 +208,7 @@ export class PositionManager {
       isPaper: this.isPaperMode,
     });
 
-    this.openPositions.set(asset, tradeId ?? orderId);
+    this.openPositions.set(asset, { tradeId: tradeId ?? orderId, orderId });
     this.dailyTradeCount++;
 
     const mode = this.isPaperMode ? '[PAPER] ' : '';
@@ -229,14 +229,15 @@ export class PositionManager {
    * Closes the open position for an asset (if any).
    */
   async closePosition(asset: Asset, reason: string): Promise<void> {
-    const tradeId = this.openPositions.get(asset);
-    if (!tradeId) return;
+    const positionInfo = this.openPositions.get(asset);
+    if (!positionInfo) return;
+    const { tradeId, orderId: paperPositionId } = positionInfo;
 
     let pnlUsdt = 0;
     let pnlPct = 0;
 
     if (this.isPaperMode && this.paperTrader) {
-      const result = await this.paperTrader.closePosition(tradeId, reason);
+      const result = await this.paperTrader.closePosition(paperPositionId, reason);
       pnlUsdt = result.pnlUsdt;
       pnlPct = result.pnlPct;
     } else {
@@ -299,14 +300,28 @@ export class PositionManager {
     log.debug('Checking open positions...');
 
     if (this.isPaperMode && this.paperTrader) {
-      const closed = await this.paperTrader.checkStopLossTakeProfit();
-      for (const posId of closed) {
-        // Find which asset this position belonged to
-        for (const [asset, tradeId] of this.openPositions.entries()) {
-          if (tradeId === posId) {
+      const closedResults = await this.paperTrader.checkStopLossTakeProfit();
+      for (const result of closedResults) {
+        for (const [asset, positionInfo] of this.openPositions.entries()) {
+          if (positionInfo.orderId === result.positionId) {
+            await updateTrade(positionInfo.tradeId, {
+              exitPrice: result.exitPrice,
+              pnlUsdt: result.pnlUsdt,
+              pnlPct: result.pnlPct,
+              status: result.reason === 'TP_HIT' ? 'TP_HIT' : 'STOPPED',
+            });
             this.openPositions.delete(asset);
-            await updateTrade(posId, { status: 'STOPPED' });
-            log.info(`${asset} position auto-closed by SL/TP (paper)`);
+            if (result.pnlUsdt < 0) {
+              this.consecutiveLosses++;
+              this.lastLossTimestamp.set(asset, Date.now());
+            } else {
+              this.consecutiveLosses = 0;
+            }
+            const pnlSign = result.pnlUsdt >= 0 ? '+' : '';
+            const msg = `[PAPER] Position auto-closed — ${result.reason}\n` +
+              `${asset} | Exit: ${result.exitPrice} | PnL: ${pnlSign}${result.pnlUsdt.toFixed(2)} (${pnlSign}${(result.pnlPct * 100).toFixed(2)}%)`;
+            log.info(msg);
+            await sendAlert(msg);
           }
         }
       }
