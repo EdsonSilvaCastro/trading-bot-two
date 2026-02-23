@@ -102,7 +102,7 @@ export class WhaleTrackerCollector {
     for (const address of allAddresses) {
       try {
         const url =
-          `https://api.etherscan.io/api?module=account&action=tokentx` +
+          `https://api.etherscan.io/v2/api?chainid=1&module=account&action=tokentx` +
           `&contractaddress=${USDT_CONTRACT}&address=${address}` +
           `&page=1&offset=50&sort=desc&apikey=${etherscanKey}`;
         const { data } = await axios.get<{ result: TokenTx[] | string }>(url, { timeout: 10_000 });

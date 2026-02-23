@@ -88,7 +88,7 @@ export class NetworkActivityCollector {
     }
 
     const url =
-      `https://api.etherscan.io/api?module=gastracker&action=gasoracle&apikey=${etherscanKey}`;
+      `https://api.etherscan.io/v2/api?chainid=1&module=gastracker&action=gasoracle&apikey=${etherscanKey}`;
     const { data } = await axios.get<{ result: { ProposeGasPrice: string } }>(url, { timeout: 10_000 });
     const gasGwei = Number(data.result.ProposeGasPrice);
 
