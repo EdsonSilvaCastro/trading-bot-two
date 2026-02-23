@@ -1,29 +1,24 @@
+import axios from 'axios';
 import { createModuleLogger } from '../monitoring/logger';
-import { insertSignal } from '../database/supabase';
+import { insertSignal, getSupabaseClient } from '../database/supabase';
 import { SUPPORTED_ASSETS } from '../config/assets';
 import { Asset, CollectorResult } from '../types';
 
 const log = createModuleLogger('network-activity');
 
+const DELAY_MS = 200;
+const delay = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
 /**
- * Collects on-chain network activity metrics (active addresses, tx count, etc.).
+ * Collects on-chain network activity metrics.
  *
- * TODO: Integrate real APIs:
- * - BTC: Glassnode API (active addresses, hash rate)
- * - ETH: Etherscan API (gas usage, active addresses)
- * - SOL: Solscan API (TPS, active wallets)
+ * BTC: Blockchain.com Charts API — unique active addresses (no API key needed)
+ * ETH: Etherscan gas oracle as network activity proxy (ETHERSCAN_API_KEY)
+ * SOL: Helius RPC getRecentPerformanceSamples (HELIUS_API_KEY)
  *
- * Requires GLASSNODE_API_KEY, ETHERSCAN_API_KEY for real data.
- * For now, returns mock data.
- *
- * Logic: Increasing network activity = bullish (growing usage/demand).
- *        Decreasing network activity = bearish (waning interest).
+ * Logic: Activity above 30d baseline = bullish; below = bearish.
  */
 export class NetworkActivityCollector {
-  /**
-   * Fetches network activity for all supported assets.
-   * Currently returns mock data — replace with real APIs in Phase 2.
-   */
   async collect(): Promise<CollectorResult[]> {
     const results: CollectorResult[] = [];
 
@@ -41,44 +36,170 @@ export class NetworkActivityCollector {
           timestamp: new Date(),
         });
       }
+      await delay(DELAY_MS);
     }
 
     return results;
   }
 
   private async fetchNetworkActivity(asset: Asset): Promise<CollectorResult> {
-    // TODO: Replace with real API calls based on asset
-    // BTC: https://api.glassnode.com/v1/metrics/addresses/active_count
-    // ETH: https://api.etherscan.io/api?module=stats&action=dailytx
-    // SOL: https://public-api.solscan.io/chaininfo
+    if (asset === 'BTC') return this.fetchBTC();
+    if (asset === 'ETH') return this.fetchETH();
+    if (asset === 'SOL') return this.fetchSOL();
+    throw new Error(`Unknown asset: ${asset}`);
+  }
 
-    const mockActivityDelta = this.generateMockActivityDelta();
-    const normalized = Math.max(-2, Math.min(2, mockActivityDelta));
+  // ─── BTC ─────────────────────────────────────────────────────────────────────
 
-    log.info(`${asset} network activity (MOCK): delta ${mockActivityDelta.toFixed(2)} (normalized: ${normalized.toFixed(2)})`);
+  private async fetchBTC(): Promise<CollectorResult> {
+    const url = 'https://api.blockchain.info/charts/n-unique-addresses?timespan=30days&format=json';
+    const { data } = await axios.get<{ values: Array<{ x: number; y: number }> }>(url, { timeout: 10_000 });
 
+    const values = data.values.map((v) => v.y);
+    const latest = values[values.length - 1];
+    const ma30 = values.reduce((a, b) => a + b, 0) / values.length;
+    const ratio = (latest - ma30) / ma30;
+    const normalized = this.ratioToNormalized(ratio);
+
+    log.info(
+      `BTC unique addresses: latest=${latest.toFixed(0)}, 30d MA=${ma30.toFixed(0)}, ` +
+      `deviation=${(ratio * 100).toFixed(1)}%, score=${normalized}`,
+    );
+
+    await insertSignal({
+      timestamp: new Date(),
+      asset: 'BTC',
+      metric: 'network_activity',
+      rawValue: latest,
+      normalized,
+      source: 'blockchain.info',
+    });
+
+    return { success: true, asset: 'BTC', metric: 'network_activity', rawValue: latest, timestamp: new Date() };
+  }
+
+  // ─── ETH ─────────────────────────────────────────────────────────────────────
+
+  private async fetchETH(): Promise<CollectorResult> {
+    const etherscanKey = process.env.ETHERSCAN_API_KEY;
+    if (!etherscanKey) {
+      log.warn('ETHERSCAN_API_KEY not set — using neutral score for ETH network activity');
+      return this.neutralResult('ETH', 'etherscan-missing');
+    }
+
+    const url =
+      `https://api.etherscan.io/api?module=gastracker&action=gasoracle&apikey=${etherscanKey}`;
+    const { data } = await axios.get<{ result: { ProposeGasPrice: string } }>(url, { timeout: 10_000 });
+    const gasGwei = Number(data.result.ProposeGasPrice);
+
+    const historical = await this.getHistoricalRawValues('ETH', 30);
+    const normalized = this.compareToHistory(gasGwei, historical);
+
+    log.info(`ETH gas price: ${gasGwei} Gwei, historical samples=${historical.length}, score=${normalized}`);
+
+    await insertSignal({
+      timestamp: new Date(),
+      asset: 'ETH',
+      metric: 'network_activity',
+      rawValue: gasGwei,
+      normalized,
+      source: 'etherscan',
+    });
+
+    return { success: true, asset: 'ETH', metric: 'network_activity', rawValue: gasGwei, timestamp: new Date() };
+  }
+
+  // ─── SOL ─────────────────────────────────────────────────────────────────────
+
+  private async fetchSOL(): Promise<CollectorResult> {
+    const heliusKey = process.env.HELIUS_API_KEY;
+    if (!heliusKey) {
+      log.warn('HELIUS_API_KEY not set — using neutral score for SOL network activity');
+      return this.neutralResult('SOL', 'helius-missing');
+    }
+
+    const url = `https://mainnet.helius-rpc.com/?api-key=${heliusKey}`;
+    const { data } = await axios.post<{ result: Array<{ numTransactions: number }> }>(
+      url,
+      { jsonrpc: '2.0', id: 1, method: 'getRecentPerformanceSamples', params: [30] },
+      { timeout: 10_000 },
+    );
+
+    const samples = data.result ?? [];
+    if (samples.length === 0) {
+      log.warn('SOL: no performance samples returned, score=0');
+      return this.neutralResult('SOL', 'helius');
+    }
+
+    const avgTxPerSlot = samples.reduce((a, s) => a + s.numTransactions, 0) / samples.length;
+    const historical = await this.getHistoricalRawValues('SOL', 30);
+    const normalized = this.compareToHistory(avgTxPerSlot, historical);
+
+    log.info(`SOL avg tx/slot: ${avgTxPerSlot.toFixed(1)}, historical samples=${historical.length}, score=${normalized}`);
+
+    await insertSignal({
+      timestamp: new Date(),
+      asset: 'SOL',
+      metric: 'network_activity',
+      rawValue: avgTxPerSlot,
+      normalized,
+      source: 'helius',
+    });
+
+    return { success: true, asset: 'SOL', metric: 'network_activity', rawValue: avgTxPerSlot, timestamp: new Date() };
+  }
+
+  // ─── Helpers ─────────────────────────────────────────────────────────────────
+
+  /**
+   * Converts a ratio of (current - MA) / MA to a -2…+2 score.
+   */
+  private ratioToNormalized(ratio: number): number {
+    if (ratio >= 0.10) return 2;
+    if (ratio >= 0.03) return 1;
+    if (ratio > -0.03) return 0;
+    if (ratio > -0.10) return -1;
+    return -2;
+  }
+
+  /**
+   * Compares current value to historical MA. Returns 0 when < 5 data points.
+   */
+  private compareToHistory(current: number, historical: number[]): number {
+    if (historical.length < 5) return 0;
+    const ma = historical.reduce((a, b) => a + b, 0) / historical.length;
+    const ratio = (current - ma) / ma;
+    return this.ratioToNormalized(ratio);
+  }
+
+  /**
+   * Queries the last N raw_value entries from onchain_signals for a given asset/metric.
+   */
+  private async getHistoricalRawValues(asset: Asset, limit: number): Promise<number[]> {
+    const client = getSupabaseClient();
+    if (!client) return [];
+    const { data } = await client
+      .from('onchain_signals')
+      .select('raw_value')
+      .eq('asset', asset)
+      .eq('metric', 'network_activity')
+      .order('timestamp', { ascending: false })
+      .limit(limit);
+    return (data ?? []).map((r: { raw_value: number }) => r.raw_value);
+  }
+
+  /**
+   * Returns a neutral (score=0) result and inserts it into Supabase.
+   */
+  private async neutralResult(asset: Asset, source: string): Promise<CollectorResult> {
     await insertSignal({
       timestamp: new Date(),
       asset,
       metric: 'network_activity',
-      rawValue: mockActivityDelta,
-      normalized,
-      source: 'mock',
+      rawValue: 0,
+      normalized: 0,
+      source,
     });
-
-    return {
-      success: true,
-      asset,
-      metric: 'network_activity',
-      rawValue: mockActivityDelta,
-      timestamp: new Date(),
-    };
-  }
-
-  /**
-   * Generates a mock network activity delta between -2 and +2.
-   */
-  private generateMockActivityDelta(): number {
-    return (Math.random() - 0.5) * 4;
+    return { success: true, asset, metric: 'network_activity', rawValue: 0, timestamp: new Date() };
   }
 }

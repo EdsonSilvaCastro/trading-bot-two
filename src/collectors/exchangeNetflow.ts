@@ -20,6 +20,7 @@ export class ExchangeNetflowCollector {
    * Currently returns mock data — replace with CryptoQuant API in Phase 2.
    */
   async collect(): Promise<CollectorResult[]> {
+    log.warn('Exchange netflow using SIMULATED data — upgrade to CryptoQuant for real data');
     const results: CollectorResult[] = [];
 
     for (const asset of SUPPORTED_ASSETS) {
@@ -70,10 +71,15 @@ export class ExchangeNetflowCollector {
   }
 
   /**
-   * Generates mock netflow value between -1000 and +1000 BTC equivalent.
+   * Generates mock netflow using a normal distribution (Box-Muller transform)
+   * centred at 0 with std dev ~350, clamped to [-1000, +1000].
+   * Produces scores clustered near neutral rather than uniformly random.
    */
   private generateMockNetflow(): number {
-    return (Math.random() - 0.5) * 2000;
+    const u1 = Math.random();
+    const u2 = Math.random();
+    const z = Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
+    return Math.max(-1000, Math.min(1000, z * 350));
   }
 
   /**
