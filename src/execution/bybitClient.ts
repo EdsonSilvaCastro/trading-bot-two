@@ -45,7 +45,7 @@ export class BybitClient {
     this.apiKey = apiKey;
     this.apiSecret = apiSecret;
     const baseURL = testnet
-      ? 'https://api-testnet.bybit.com'
+      ? 'https://api-demo.bybit.com'
       : 'https://api.bybit.com';
 
     this.http = axios.create({ baseURL, timeout: 10_000 });
