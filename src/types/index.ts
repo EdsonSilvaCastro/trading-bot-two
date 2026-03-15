@@ -44,6 +44,8 @@ export interface CompositeScore {
   components: Record<string, number>;
 }
 
+export type Killzone = 'LONDON' | 'NEW_YORK' | 'ASIA' | 'OFF_SESSION';
+
 export interface Trade {
   id: string;
   timestamp: Date;
@@ -57,9 +59,19 @@ export interface Trade {
   takeProfit: number;
   pnlUsdt?: number;
   pnlPct?: number;
+  rrAchieved?: number;       // R:R realizado al cierre
   scoreAtEntry: number;
   status: TradeStatus;
   isPaper: boolean;
+
+  // Métricas de calidad de ejecución
+  mae?: number;              // Maximum Adverse Excursion (%)
+  mfe?: number;              // Maximum Favorable Excursion (%)
+
+  // Contexto temporal
+  killzone?: string;         // 'LONDON' | 'NEW_YORK' | 'ASIA' | 'OFF_SESSION'
+  dayOfWeek?: string;        // 'MON' | 'TUE' | 'WED' | 'THU' | 'FRI' | 'SAT' | 'SUN'
+  hourUtc?: number;          // 0-23
 }
 
 export interface AssetConfig {

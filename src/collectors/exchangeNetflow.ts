@@ -1,3 +1,4 @@
+import axios from 'axios';
 import { createModuleLogger } from '../monitoring/logger';
 import { insertSignal } from '../database/supabase';
 import { SUPPORTED_ASSETS } from '../config/assets';
@@ -5,30 +6,69 @@ import { Asset, CollectorResult } from '../types';
 
 const log = createModuleLogger('exchange-netflow');
 
+const FEAR_GREED_URL = 'https://api.alternative.me/fng/?limit=1';
+
+interface FearGreedResponse {
+  data: Array<{
+    value: string;
+    value_classification: string;
+    timestamp: string;
+  }>;
+}
+
 /**
- * Collects exchange netflow data (coins moving in/out of exchanges).
+ * Uses the Crypto Fear & Greed Index (alternative.me) as a proxy for
+ * exchange netflow / market sentiment.
  *
- * TODO: Integrate CryptoQuant API for real exchange netflow data.
- * CryptoQuant requires a paid API key. For now, returns mock data.
+ * Contrarian interpretation (consistent with ICT smart money logic):
+ * - Extreme Fear  (<25)  → score +2  (smart money accumulating, bullish)
+ * - Fear          (25-44) → score +1
+ * - Neutral       (45-55) → score  0
+ * - Greed         (56-75) → score -1
+ * - Extreme Greed (>75)  → score -2  (smart money distributing, bearish)
  *
- * Logic: Negative netflow (coins leaving exchanges) = bullish (accumulation).
- *        Positive netflow (coins entering exchanges) = bearish (potential sell pressure).
+ * API: https://alternative.me/crypto/fear-and-greed-index/
+ * Free, no API key required.
  */
 export class ExchangeNetflowCollector {
-  /**
-   * Fetches exchange netflow for all supported assets.
-   * Currently returns mock data — replace with CryptoQuant API in Phase 2.
-   */
   async collect(): Promise<CollectorResult[]> {
-    log.warn('Exchange netflow using SIMULATED data — upgrade to CryptoQuant for real data');
+    let normalized = 0;
+    let rawValue = 50; // neutral default
+    let source = 'fear-greed-index';
+
+    try {
+      const score = await this.fetchFearGreedScore();
+      normalized = score.normalized;
+      rawValue = score.rawValue;
+    } catch (err) {
+      log.warn(`Fear & Greed fetch failed — using neutral score: ${(err as Error).message}`);
+      source = 'fear-greed-fallback';
+    }
+
     const results: CollectorResult[] = [];
 
     for (const asset of SUPPORTED_ASSETS) {
       try {
-        const result = await this.fetchNetflow(asset);
-        results.push(result);
+        log.info(`${asset} fear/greed score: index=${rawValue}, normalized=${normalized}`);
+
+        await insertSignal({
+          timestamp: new Date(),
+          asset,
+          metric: 'exchange_netflow',
+          rawValue,
+          normalized,
+          source,
+        });
+
+        results.push({
+          success: true,
+          asset,
+          metric: 'exchange_netflow',
+          rawValue,
+          timestamp: new Date(),
+        });
       } catch (err) {
-        log.error(`Failed to collect netflow for ${asset}: ${(err as Error).message}`);
+        log.error(`Failed to record netflow for ${asset}: ${(err as Error).message}`);
         results.push({
           success: false,
           asset,
@@ -42,54 +82,34 @@ export class ExchangeNetflowCollector {
     return results;
   }
 
-  private async fetchNetflow(asset: Asset): Promise<CollectorResult> {
-    // TODO: Replace with real CryptoQuant API call
-    // const url = `https://api.cryptoquant.com/v1/btc/exchange-flows/netflow`;
-    // Requires CRYPTOQUANT_API_KEY
+  private async fetchFearGreedScore(): Promise<{ normalized: number; rawValue: number }> {
+    const { data } = await axios.get<FearGreedResponse>(FEAR_GREED_URL, { timeout: 10_000 });
 
-    const mockNetflow = this.generateMockNetflow();
-    const normalized = this.normalizeNetflow(mockNetflow);
+    if (!data.data?.length) {
+      throw new Error('Empty response from Fear & Greed API');
+    }
 
-    log.info(`${asset} exchange netflow (MOCK): ${mockNetflow.toFixed(2)} (normalized: ${normalized.toFixed(2)})`);
+    const index = parseInt(data.data[0].value, 10);
+    const classification = data.data[0].value_classification;
 
-    await insertSignal({
-      timestamp: new Date(),
-      asset,
-      metric: 'exchange_netflow',
-      rawValue: mockNetflow,
-      normalized,
-      source: 'mock',
-    });
+    log.info(`Fear & Greed Index: ${index} (${classification})`);
 
     return {
-      success: true,
-      asset,
-      metric: 'exchange_netflow',
-      rawValue: mockNetflow,
-      timestamp: new Date(),
+      rawValue: index,
+      normalized: this.indexToNormalized(index),
     };
   }
 
   /**
-   * Generates mock netflow using a normal distribution (Box-Muller transform)
-   * centred at 0 with std dev ~350, clamped to [-1000, +1000].
-   * Produces scores clustered near neutral rather than uniformly random.
+   * Maps Fear & Greed index (0-100) to -2…+2 sentiment score.
+   * Uses contrarian logic: extreme fear = bullish signal (smart money buys fear).
    */
-  private generateMockNetflow(): number {
-    const u1 = Math.random();
-    const u2 = Math.random();
-    const z = Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
-    return Math.max(-1000, Math.min(1000, z * 350));
-  }
-
-  /**
-   * Normalizes netflow to -2 to +2 scale.
-   * Large outflow (-1000+) = +2 (bullish accumulation)
-   * Large inflow (+1000+) = -2 (bearish sell pressure)
-   */
-  private normalizeNetflow(netflow: number): number {
-    const inverted = -netflow; // Invert: outflow is bullish
-    const clamped = Math.max(-1000, Math.min(1000, inverted));
-    return (clamped / 1000) * 2;
+  private indexToNormalized(index: number): number {
+    if (index < 25) return 2;   // Extreme Fear  → bullish
+    if (index < 45) return 1;   // Fear          → mildly bullish
+    if (index <= 55) return 0;  // Neutral
+    if (index <= 75) return -1; // Greed         → mildly bearish
+    return -2;                  // Extreme Greed → bearish
   }
 }
+

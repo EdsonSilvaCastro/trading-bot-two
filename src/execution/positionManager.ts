@@ -1,4 +1,5 @@
 import { createModuleLogger } from '../monitoring/logger';
+import { getKillzone, getDayOfWeek } from '../utils/time';
 import { insertTrade, updateTrade } from '../database/supabase';
 import { sendAlert } from '../monitoring/telegramBot';
 import { ASSET_CONFIGS, SUPPORTED_ASSETS } from '../config/assets';
@@ -194,8 +195,9 @@ export class PositionManager {
       orderId = result.orderId;
     }
 
+    const now = new Date();
     const tradeId = await insertTrade({
-      timestamp: new Date(),
+      timestamp: now,
       asset,
       direction: side === 'Buy' ? 'LONG' : 'SHORT',
       entryPrice: sizing.entryPrice,
@@ -206,6 +208,9 @@ export class PositionManager {
       scoreAtEntry: decision.score,
       status: 'OPEN',
       isPaper: this.isPaperMode,
+      killzone: getKillzone(now),
+      dayOfWeek: getDayOfWeek(now),
+      hourUtc: now.getUTCHours(),
     });
 
     this.openPositions.set(asset, { tradeId: tradeId ?? orderId, orderId });
@@ -258,10 +263,15 @@ export class PositionManager {
     }
 
     const exitPrice = await this.bybitClient.getCurrentPrice(ASSET_CONFIGS[asset].symbol);
+    const assetCfgForClose = ASSET_CONFIGS[asset];
+    const rrAchieved = assetCfgForClose.stopLossPct > 0
+      ? Math.abs(pnlPct) / assetCfgForClose.stopLossPct * (pnlUsdt >= 0 ? 1 : -1)
+      : 0;
     await updateTrade(tradeId, {
       exitPrice,
       pnlUsdt,
       pnlPct,
+      rrAchieved,
       status: pnlUsdt >= 0 ? 'CLOSED' : 'STOPPED',
     });
 
@@ -304,10 +314,15 @@ export class PositionManager {
       for (const result of closedResults) {
         for (const [asset, positionInfo] of this.openPositions.entries()) {
           if (positionInfo.orderId === result.positionId) {
+            const assetCfgAuto = ASSET_CONFIGS[asset];
+            const rrAchievedAuto = assetCfgAuto.stopLossPct > 0
+              ? Math.abs(result.pnlPct) / assetCfgAuto.stopLossPct * (result.pnlUsdt >= 0 ? 1 : -1)
+              : 0;
             await updateTrade(positionInfo.tradeId, {
               exitPrice: result.exitPrice,
               pnlUsdt: result.pnlUsdt,
               pnlPct: result.pnlPct,
+              rrAchieved: rrAchievedAuto,
               status: result.reason === 'TP_HIT' ? 'TP_HIT' : 'STOPPED',
             });
             this.openPositions.delete(asset);

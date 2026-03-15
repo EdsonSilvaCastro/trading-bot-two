@@ -6,7 +6,21 @@
       "Bash(git -C /Users/edsonsilva/onchain-futures-bot config --global user.name)",
       "Bash(git -C /Users/edsonsilva/onchain-futures-bot config:*)",
       "Bash(git init:*)",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git remote add:*)",
+      "Bash(git branch:*)",
+      "Bash(git push:*)",
+      "Bash(/Users/edsonsilva/onchain-futures-bot/src/engine/index.ts:*)",
+      "Bash(npx tsc:*)",
+      "Bash(/Users/edsonsilva/onchain-futures-bot/src/execution/index.ts:*)",
+      "Bash(git -C /Users/edsonsilva/onchain-futures-bot check-ignore .env)",
+      "Bash(git -C /Users/edsonsilva/onchain-futures-bot log --oneline)",
+      "Bash(git -C /Users/edsonsilva/onchain-futures-bot show HEAD --stat)",
+      "Bash(git -C /Users/edsonsilva/onchain-futures-bot log --all --full-history -- .env)",
+      "Bash(node --version:*)",
+      "Bash(curl:*)",
+      "Bash(npx ts-node:*)"
     ]
   }
 }

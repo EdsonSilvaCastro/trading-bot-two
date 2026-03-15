@@ -143,9 +143,15 @@ export async function insertTrade(trade: Omit<Trade, 'id'>): Promise<string | nu
       take_profit: trade.takeProfit,
       pnl_usdt: trade.pnlUsdt ?? null,
       pnl_pct: trade.pnlPct ?? null,
+      rr_achieved: trade.rrAchieved ?? null,
       score_at_entry: trade.scoreAtEntry,
       status: trade.status,
       is_paper: trade.isPaper,
+      mae: trade.mae ?? null,
+      mfe: trade.mfe ?? null,
+      killzone: trade.killzone ?? null,
+      day_of_week: trade.dayOfWeek ?? null,
+      hour_utc: trade.hourUtc ?? null,
     });
 
     if (error) {
@@ -165,7 +171,7 @@ export async function insertTrade(trade: Omit<Trade, 'id'>): Promise<string | nu
  */
 export async function updateTrade(
   tradeId: string,
-  updates: Partial<Pick<Trade, 'exitPrice' | 'pnlUsdt' | 'pnlPct' | 'status'>>
+  updates: Partial<Pick<Trade, 'exitPrice' | 'pnlUsdt' | 'pnlPct' | 'rrAchieved' | 'status' | 'mae' | 'mfe'>>
 ): Promise<boolean> {
   const client = getSupabaseClient();
   if (!client) return false;
@@ -175,6 +181,9 @@ export async function updateTrade(
     if (updates.exitPrice !== undefined) updateData.exit_price = updates.exitPrice;
     if (updates.pnlUsdt !== undefined) updateData.pnl_usdt = updates.pnlUsdt;
     if (updates.pnlPct !== undefined) updateData.pnl_pct = updates.pnlPct;
+    if (updates.rrAchieved !== undefined) updateData.rr_achieved = updates.rrAchieved;
+    if (updates.mae !== undefined) updateData.mae = updates.mae;
+    if (updates.mfe !== undefined) updateData.mfe = updates.mfe;
     if (updates.status !== undefined) updateData.status = updates.status;
 
     const { error } = await client.from('trades').update(updateData).eq('id', tradeId);
