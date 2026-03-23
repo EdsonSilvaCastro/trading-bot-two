@@ -3,6 +3,7 @@ dotenv.config();
 
 import logger, { createModuleLogger } from './monitoring/logger';
 import { getSupabaseClient } from './database/supabase';
+import { sendHeartbeat, checkDashboardCommands, isPaused } from './database/dashboardClient';
 import { initTelegramBot, stopTelegramBot, sendAlert, sendSignalUpdate, setScoreEngine } from './monitoring/telegramBot';
 import { CollectorOrchestrator } from './collectors';
 import { SignalProcessor, CompositeScoreEngine, DecisionEngine } from './engine';
@@ -10,14 +11,16 @@ import { BybitClient, PaperTrader, PositionManager } from './execution';
 
 const log = createModuleLogger('main');
 
-const SCORING_INTERVAL_MS = 4 * 60 * 60 * 1000;   // 4 hours
-const POSITION_CHECK_MS   = 15 * 60 * 1000;         // 15 minutes
+const SCORING_INTERVAL_MS  = 4 * 60 * 60 * 1000;   // 4 hours
+const POSITION_CHECK_MS    = 15 * 60 * 1000;         // 15 minutes
+const DASHBOARD_CHECK_MS   = 60 * 1000;              // 1 minute
 
 const isPaperMode = process.env.PAPER_TRADING !== 'false';
 
 let orchestrator: CollectorOrchestrator | null = null;
 let scoringTimer: NodeJS.Timeout | null = null;
 let positionCheckTimer: NodeJS.Timeout | null = null;
+let dashboardTimer: NodeJS.Timeout | null = null;
 
 async function main(): Promise<void> {
   log.info('=== On-Chain Futures Bot Starting ===');
@@ -60,8 +63,18 @@ async function main(): Promise<void> {
     isPaperMode,
   );
 
+  // Dashboard heartbeat + command polling (every 1 minute)
+  dashboardTimer = setInterval(async () => {
+    await checkDashboardCommands(() => shutdown('KILL'));
+    const activePositions = isPaperMode
+      ? (await paperTrader.getOpenPositions()).length
+      : 0;
+    await sendHeartbeat(activePositions);
+  }, DASHBOARD_CHECK_MS);
+
   // Scoring + execution cycle
   async function runScoringCycle(): Promise<void> {
+    if (isPaused()) { log.info('⏸ Bot is PAUSED — skipping scoring cycle'); return; }
     log.info('Running scoring cycle...');
     try {
       const scores = await compositeScoreEngine.calculateAllScores();
@@ -108,6 +121,7 @@ function shutdown(signal: string): void {
   if (orchestrator) orchestrator.stop();
   if (scoringTimer) clearInterval(scoringTimer);
   if (positionCheckTimer) clearInterval(positionCheckTimer);
+  if (dashboardTimer) clearInterval(dashboardTimer);
   stopTelegramBot();
 
   log.info('Shutdown complete');
