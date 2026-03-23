@@ -3,7 +3,18 @@
 // Uses the same Supabase project (FVG/OnChain) — no second client needed.
 // ============================================================
 
-import { getSupabaseClient } from './supabase';
+import { createClient, SupabaseClient } from '@supabase/supabase-js';
+
+let serviceClient: SupabaseClient | null = null;
+
+function getDashboardClient(): SupabaseClient | null {
+  if (serviceClient) return serviceClient;
+  const url = process.env.SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_ANON_KEY;
+  if (!url || !key) return null;
+  serviceClient = createClient(url, key, { auth: { persistSession: false } });
+  return serviceClient;
+}
 
 let paused = false;
 
@@ -12,7 +23,7 @@ export function isPaused(): boolean {
 }
 
 export async function sendHeartbeat(activePositions: number): Promise<void> {
-  const client = getSupabaseClient();
+  const client = getDashboardClient();
   if (!client) return;
 
   try {
@@ -27,7 +38,7 @@ export async function sendHeartbeat(activePositions: number): Promise<void> {
 }
 
 export async function checkDashboardCommands(onKill: () => void): Promise<void> {
-  const client = getSupabaseClient();
+  const client = getDashboardClient();
   if (!client) return;
 
   try {
